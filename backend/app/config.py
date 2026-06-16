@@ -70,6 +70,7 @@ class Config:
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY 未配置")
         if not cls.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY 未配置")
+            import warnings as _w
+            _w.warn("ZEP_API_KEY 未配置 — GraphRAG 记忆功能将被禁用，基础模拟仍可运行")
         return errors
 

@@ -241,9 +241,10 @@ class ZepGraphMemoryUpdater:
         self.api_key = api_key or Config.ZEP_API_KEY
         
         if not self.api_key:
-            raise ValueError("ZEP_API_KEY未配置")
-        
-        self.client = Zep(api_key=self.api_key)
+            logger.warning("ZEP_API_KEY 未配置，Zep图谱记忆功能将不可用")
+            self.client = None
+        else:
+            self.client = Zep(api_key=self.api_key)
         
         # 活动队列
         self._activity_queue: Queue = Queue()
@@ -275,6 +276,10 @@ class ZepGraphMemoryUpdater:
     def start(self):
         """启动后台工作线程"""
         if self._running:
+            return
+        
+        if self.client is None:
+            logger.warning("Zep client 未配置，后台工作线程未启动")
             return
 
         # Capture locale before spawning background thread
@@ -404,6 +409,10 @@ class ZepGraphMemoryUpdater:
         if not activities:
             return
         
+        if self.client is None:
+            logger.debug("Zep client 未配置，跳过发送")
+            return
+        
         # 将多条活动合并为一条文本，用换行分隔
         episode_texts = [activity.to_episode_text() for activity in activities]
         combined_text = "\n".join(episode_texts)
@@ -434,6 +443,8 @@ class ZepGraphMemoryUpdater:
     
     def _flush_remaining(self):
         """发送队列和缓冲区中剩余的活动"""
+        if self.client is None:
+            return
         # 首先处理队列中剩余的活动，添加到缓冲区
         while not self._activity_queue.empty():
             try:

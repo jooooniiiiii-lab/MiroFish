@@ -81,7 +81,9 @@ class ZepEntityReader:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or Config.ZEP_API_KEY
         if not self.api_key:
-            raise ValueError("ZEP_API_KEY 未配置")
+            logger.warning("ZEP_API_KEY 未配置 — Zep memory/entity features disabled")
+            self.client = None
+            return
         
         self.client = Zep(api_key=self.api_key)
     
@@ -127,6 +129,10 @@ class ZepEntityReader:
     def get_all_nodes(self, graph_id: str) -> List[Dict[str, Any]]:
         """
         获取图谱的所有节点（分页获取）
+        """
+        if not self.client:
+            logger.warning("Zep client not available (no API key)")
+            return []
 
         Args:
             graph_id: 图谱ID
@@ -161,6 +167,9 @@ class ZepEntityReader:
         Returns:
             边列表
         """
+        if not self.client:
+            logger.warning("Zep client not available (no API key)")
+            return []
         logger.info(f"获取图谱 {graph_id} 的所有边...")
 
         edges = fetch_all_edges(self.client, graph_id)
@@ -189,6 +198,8 @@ class ZepEntityReader:
         Returns:
             边列表
         """
+        if not self.client:
+            return []
         try:
             # 使用重试机制调用Zep API
             edges = self._call_with_retry(

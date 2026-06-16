@@ -425,12 +425,14 @@ class ZepToolsService:
     def __init__(self, api_key: Optional[str] = None, llm_client: Optional[LLMClient] = None):
         self.api_key = api_key or Config.ZEP_API_KEY
         if not self.api_key:
-            raise ValueError("ZEP_API_KEY 未配置")
-        
-        self.client = Zep(api_key=self.api_key)
+            logger.warning(t("console.zepToolsNotConfigured", fallback="ZEP_API_KEY 未配置，Zep检索工具将不可用"))
+            self.client = None
+        else:
+            self.client = Zep(api_key=self.api_key)
         # LLM客户端用于InsightForge生成子问题
         self._llm_client = llm_client
-        logger.info(t("console.zepToolsInitialized"))
+        if self.client is not None:
+            logger.info(t("console.zepToolsInitialized"))
     
     @property
     def llm(self) -> LLMClient:
@@ -439,6 +441,13 @@ class ZepToolsService:
             self._llm_client = LLMClient()
         return self._llm_client
     
+    def _check_client(self) -> bool:
+        """检查Zep client是否可用，不可用时记录警告"""
+        if self.client is None:
+            logger.warning("Zep client 未配置，操作已跳过")
+            return False
+        return True
+
     def _call_with_retry(self, func, operation_name: str, max_retries: int = None):
         """带重试机制的API调用"""
         max_retries = max_retries or self.MAX_RETRIES
@@ -484,6 +493,8 @@ class ZepToolsService:
             SearchResult: 搜索结果
         """
         logger.info(t("console.graphSearch", graphId=graph_id, query=query[:50]))
+        if not self._check_client():
+            return SearchResult(facts=[], edges=[], nodes=[], query=query, total_count=0)
         
         # 尝试使用Zep Cloud Search API
         try:
@@ -658,6 +669,8 @@ class ZepToolsService:
             节点列表
         """
         logger.info(t("console.fetchingAllNodes", graphId=graph_id))
+        if not self._check_client():
+            return []
 
         nodes = fetch_all_nodes(self.client, graph_id)
 
@@ -687,6 +700,8 @@ class ZepToolsService:
             边列表（包含created_at, valid_at, invalid_at, expired_at）
         """
         logger.info(t("console.fetchingAllEdges", graphId=graph_id))
+        if not self._check_client():
+            return []
 
         edges = fetch_all_edges(self.client, graph_id)
 
@@ -724,6 +739,8 @@ class ZepToolsService:
             节点信息或None
         """
         logger.info(t("console.fetchingNodeDetail", uuid=node_uuid[:8]))
+        if not self._check_client():
+            return None
         
         try:
             node = self._call_with_retry(

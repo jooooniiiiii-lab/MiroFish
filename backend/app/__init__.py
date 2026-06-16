@@ -9,7 +9,7 @@ import warnings
 # 需要在所有其他导入之前设置
 warnings.filterwarnings("ignore", message=".*resource_tracker.*")
 
-from flask import Flask, request
+from flask import Flask, request, send_from_directory
 from flask_cors import CORS
 
 from .config import Config
@@ -68,10 +68,31 @@ def create_app(config_class=Config):
     app.register_blueprint(simulation_bp, url_prefix='/api/simulation')
     app.register_blueprint(report_bp, url_prefix='/api/report')
     
-    # 健康检查
+    # Health check
     @app.route('/health')
     def health():
         return {'status': 'ok', 'service': 'MiroFish Backend'}
+    
+    # Serve built frontend for HF Spaces (single-port deployment)
+    frontend_dist = os.path.join(os.path.dirname(__file__), '../../frontend/dist')
+    if os.environ.get('HF_SPACE') == 'true' and os.path.isdir(frontend_dist):
+        @app.route('/')
+        def serve_frontend_index():
+            return send_from_directory(frontend_dist, 'index.html')
+        
+        @app.route('/assets/<path:filename>')
+        def serve_frontend_assets(filename):
+            return send_from_directory(os.path.join(frontend_dist, 'assets'), filename)
+        
+        @app.route('/<path:path>')
+        def serve_frontend_spa(path):
+            file_path = os.path.join(frontend_dist, path)
+            if os.path.exists(file_path) and not os.path.isdir(file_path):
+                return send_from_directory(frontend_dist, path)
+            return send_from_directory(frontend_dist, 'index.html')
+        
+        if should_log_startup:
+            logger.info(f"Serving frontend from: {frontend_dist}")
     
     if should_log_startup:
         logger.info("MiroFish Backend 启动完成")
