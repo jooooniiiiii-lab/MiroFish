@@ -1,24 +1,25 @@
-FROM python:3.11
+FROM python:3.11-slim
 
-# Install Node.js (>=18) + required tools
+# Install Node.js 20.x LTS
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends nodejs npm \
+  && apt-get install -y --no-install-recommends curl ca-certificates \
+  && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+  && apt-get install -y --no-install-recommends nodejs \
+  && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
-
-# Copy uv from official image
-COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
 
 WORKDIR /app
 
-# Copy dependency files first (for caching)
+# Copy dependency files first
 COPY package.json package-lock.json ./
 COPY frontend/package.json frontend/package-lock.json ./frontend/
-COPY backend/pyproject.toml backend/uv.lock ./backend/
+COPY backend/requirements.txt ./backend/
 
-# Install dependencies (Node + Python)
-RUN npm ci \
-  && npm ci --prefix frontend \
-  && cd backend && uv sync --frozen
+# Install Node dependencies
+RUN npm ci && npm ci --prefix frontend
+
+# Install Python dependencies (using pip with --default-timeout for slow downloads)
+RUN pip install --timeout 120 --no-cache-dir -r backend/requirements.txt
 
 # Copy source code
 COPY . .
@@ -26,12 +27,11 @@ COPY . .
 # Build frontend for production
 RUN cd frontend && npm run build
 
-# HF Spaces uses port 7860
 EXPOSE 7860
 
-# Start backend (Flask serves both API + built frontend on port 7860)
 ENV FLASK_HOST=0.0.0.0
 ENV FLASK_PORT=7860
 ENV HF_SPACE=true
+ENV PYTHONUNBUFFERED=1
 
-CMD ["uv", "run", "--directory", "backend", "python", "run.py"]
+CMD ["python", "backend/run.py"]

@@ -32,8 +32,8 @@ class Config:
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
     
-    # Zep配置
-    ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+    # Embedding配置（GraphStore本地语义搜索）
+    EMBEDDING_MODEL_NAME = os.environ.get('EMBEDDING_MODEL_NAME', 'sentence-transformers/all-MiniLM-L6-v2')
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
@@ -69,8 +69,8 @@ class Config:
         errors: list[str] = []
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY 未配置")
-        if not cls.ZEP_API_KEY:
+        if not cls.EMBEDDING_MODEL_NAME:
             import warnings as _w
-            _w.warn("ZEP_API_KEY 未配置 — GraphRAG 记忆功能将被禁用，基础模拟仍可运行")
+            _w.warn("EMBEDDING_MODEL_NAME 未配置 — 语义搜索将降级为关键词匹配")
         return errors
 

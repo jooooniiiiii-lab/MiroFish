@@ -26,5 +26,10 @@
   "de": {
     "label": "Deutsch",
     "llmInstruction": "Bitte antworten Sie auf Deutsch."
+  },
+  "ar": {
+    "label": "العربية",
+    "llmInstruction": "الرجاء الرد باللغة العربية.",
+    "dir": "rtl"
   }
 }

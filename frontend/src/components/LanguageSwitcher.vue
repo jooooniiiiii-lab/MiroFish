@@ -40,6 +40,9 @@ const switchLocale = (key) => {
   locale.value = key
   localStorage.setItem('locale', key)
   document.documentElement.lang = key
+  // Set RTL direction for Arabic
+  const rtlLangs = ['ar']
+  document.documentElement.dir = rtlLangs.includes(key) ? 'rtl' : 'ltr'
   open.value = false
 }
 
@@ -52,6 +55,8 @@ const onClickOutside = (e) => {
 onMounted(() => {
   document.addEventListener('click', onClickOutside)
   document.documentElement.lang = locale.value
+  const rtlLangs = ['ar']
+  document.documentElement.dir = rtlLangs.includes(locale.value) ? 'rtl' : 'ltr'
 })
 
 onUnmounted(() => {

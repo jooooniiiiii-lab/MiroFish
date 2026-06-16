@@ -1,9 +1,9 @@
 """
 OASIS Agent Profile生成器
-将Zep图谱中的实体转换为OASIS模拟平台所需的Agent Profile格式
+将图谱中的实体转换为OASIS模拟平台所需的Agent Profile格式
 
 优化改进：
-1. 调用Zep检索功能二次丰富节点信息
+1. 调用GraphStore检索功能二次丰富节点信息
 2. 优化提示词生成非常详细的人设
 3. 区分个人实体和抽象群体实体
 """
@@ -16,12 +16,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from openai import OpenAI
-from zep_cloud.client import Zep
-
 from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, get_locale, set_locale, t
-from .zep_entity_reader import EntityNode, ZepEntityReader
+from .entity_reader import EntityNode, EntityReader
+from .graph_store import GraphStore
 
 logger = get_logger('mirofish.oasis_profile')
 
@@ -183,7 +182,6 @@ class OasisProfileGenerator:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model_name: Optional[str] = None,
-        zep_api_key: Optional[str] = None,
         graph_id: Optional[str] = None
     ):
         self.api_key = api_key or Config.LLM_API_KEY
@@ -198,16 +196,9 @@ class OasisProfileGenerator:
             base_url=self.base_url
         )
         
-        # Zep客户端用于检索丰富上下文
-        self.zep_api_key = zep_api_key or Config.ZEP_API_KEY
-        self.zep_client = None
+        # GraphStore用于检索丰富上下文
+        self.graph_store = GraphStore()
         self.graph_id = graph_id
-        
-        if self.zep_api_key:
-            try:
-                self.zep_client = Zep(api_key=self.zep_api_key)
-            except Exception as e:
-                logger.warning(f"Zep客户端初始化失败: {e}")
     
     def generate_profile_from_entity(
         self, 
@@ -216,10 +207,10 @@ class OasisProfileGenerator:
         use_llm: bool = True
     ) -> OasisAgentProfile:
         """
-        从Zep实体生成OASIS Agent Profile
+        从实体生成OASIS Agent Profile
         
         Args:
-            entity: Zep实体节点
+            entity: 实体节点
             user_id: 用户ID（用于OASIS）
             use_llm: 是否使用LLM生成详细人设
             
@@ -298,7 +289,7 @@ class OasisProfileGenerator:
         """
         import concurrent.futures
         
-        if not self.zep_client:
+        if not hasattr(self, 'graph_id') or not self.graph_id:
             return {"facts": [], "node_summaries": [], "context": ""}
         
         entity_name = entity.name
@@ -311,7 +302,7 @@ class OasisProfileGenerator:
         
         # 必须有graph_id才能进行搜索
         if not self.graph_id:
-            logger.debug(f"跳过Zep检索：未设置graph_id")
+            logger.debug(f"跳过GraphStore检索：未设置graph_id")
             return results
         
         comprehensive_query = t('progress.zepSearchQuery', name=entity_name)
@@ -324,9 +315,9 @@ class OasisProfileGenerator:
             
             for attempt in range(max_retries):
                 try:
-                    return self.zep_client.graph.search(
-                        query=comprehensive_query,
+                    return self.graph_store.search(
                         graph_id=self.graph_id,
+                        query=comprehensive_query,
                         limit=30,
                         scope="edges",
                         reranker="rrf"
@@ -334,11 +325,11 @@ class OasisProfileGenerator:
                 except Exception as e:
                     last_exception = e
                     if attempt < max_retries - 1:
-                        logger.debug(f"Zep边搜索第 {attempt + 1} 次失败: {str(e)[:80]}, 重试中...")
+                        logger.debug(f"GraphStore边搜索第 {attempt + 1} 次失败: {str(e)[:80]}, 重试中...")
                         time.sleep(delay)
                         delay *= 2
                     else:
-                        logger.debug(f"Zep边搜索在 {max_retries} 次尝试后仍失败: {e}")
+                        logger.debug(f"GraphStore边搜索在 {max_retries} 次尝试后仍失败: {e}")
             return None
         
         def search_nodes():
@@ -349,9 +340,9 @@ class OasisProfileGenerator:
             
             for attempt in range(max_retries):
                 try:
-                    return self.zep_client.graph.search(
-                        query=comprehensive_query,
+                    return self.graph_store.search(
                         graph_id=self.graph_id,
+                        query=comprehensive_query,
                         limit=20,
                         scope="nodes",
                         reranker="rrf"
@@ -359,11 +350,11 @@ class OasisProfileGenerator:
                 except Exception as e:
                     last_exception = e
                     if attempt < max_retries - 1:
-                        logger.debug(f"Zep节点搜索第 {attempt + 1} 次失败: {str(e)[:80]}, 重试中...")
+                        logger.debug(f"GraphStore节点搜索第 {attempt + 1} 次失败: {str(e)[:80]}, 重试中...")
                         time.sleep(delay)
                         delay *= 2
                     else:
-                        logger.debug(f"Zep节点搜索在 {max_retries} 次尝试后仍失败: {e}")
+                        logger.debug(f"GraphStore节点搜索在 {max_retries} 次尝试后仍失败: {e}")
             return None
         
         try:
@@ -378,20 +369,20 @@ class OasisProfileGenerator:
             
             # 处理边搜索结果
             all_facts = set()
-            if edge_result and hasattr(edge_result, 'edges') and edge_result.edges:
-                for edge in edge_result.edges:
-                    if hasattr(edge, 'fact') and edge.fact:
-                        all_facts.add(edge.fact)
+            if edge_result and edge_result.get('edges'):
+                for edge in edge_result['edges']:
+                    if edge.get('fact'):
+                        all_facts.add(edge['fact'])
             results["facts"] = list(all_facts)
             
             # 处理节点搜索结果
             all_summaries = set()
-            if node_result and hasattr(node_result, 'nodes') and node_result.nodes:
-                for node in node_result.nodes:
-                    if hasattr(node, 'summary') and node.summary:
-                        all_summaries.add(node.summary)
-                    if hasattr(node, 'name') and node.name and node.name != entity_name:
-                        all_summaries.add(f"相关实体: {node.name}")
+            if node_result and node_result.get('nodes'):
+                for node in node_result['nodes']:
+                    if node.get('summary'):
+                        all_summaries.add(node['summary'])
+                    if node.get('name') and node['name'] != entity_name:
+                        all_summaries.add(f"相关实体: {node['name']}")
             results["node_summaries"] = list(all_summaries)
             
             # 构建综合上下文
@@ -402,12 +393,12 @@ class OasisProfileGenerator:
                 context_parts.append("相关实体:\n" + "\n".join(f"- {s}" for s in results["node_summaries"][:10]))
             results["context"] = "\n\n".join(context_parts)
             
-            logger.info(f"Zep混合检索完成: {entity_name}, 获取 {len(results['facts'])} 条事实, {len(results['node_summaries'])} 个相关节点")
+            logger.info(f"GraphStore混合检索完成: {entity_name}, 获取 {len(results['facts'])} 条事实, {len(results['node_summaries'])} 个相关节点")
             
         except concurrent.futures.TimeoutError:
-            logger.warning(f"Zep检索超时 ({entity_name})")
+            logger.warning(f"GraphStore检索超时 ({entity_name})")
         except Exception as e:
-            logger.warning(f"Zep检索失败 ({entity_name}): {e}")
+            logger.warning(f"GraphStore检索失败 ({entity_name}): {e}")
         
         return results
     
@@ -418,7 +409,7 @@ class OasisProfileGenerator:
         包括：
         1. 实体本身的边信息（事实）
         2. 关联节点的详细信息
-        3. Zep混合检索到的丰富信息
+        3. GraphStore混合检索到的丰富信息
         """
         context_parts = []
         

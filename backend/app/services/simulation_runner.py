@@ -21,7 +21,7 @@ from queue import Queue
 from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.locale import get_locale, set_locale
-from .zep_graph_memory_updater import ZepGraphMemoryManager
+from .graph_store import GraphStore
 from .simulation_ipc import SimulationIPCClient, CommandType, IPCResponse
 
 logger = get_logger('mirofish.simulation_runner')
@@ -224,8 +224,8 @@ class SimulationRunner:
     _stdout_files: Dict[str, Any] = {}  # 存储 stdout 文件句柄
     _stderr_files: Dict[str, Any] = {}  # 存储 stderr 文件句柄
     
-    # 图谱记忆更新配置
-    _graph_memory_enabled: Dict[str, bool] = {}  # simulation_id -> enabled
+    # 图谱记忆更新配置 {simulation_id: {"store": GraphStore, "graph_id": str}}
+    _graph_memory: Dict[str, Dict[str, Any]] = {}
     
     @classmethod
     def get_run_state(cls, simulation_id: str) -> Optional[SimulationRunState]:
@@ -369,20 +369,15 @@ class SimulationRunner:
         
         cls._save_run_state(state)
         
-        # 如果启用图谱记忆更新，创建更新器
+        # 启用图谱记忆更新（将模拟活动写回GraphStore）
         if enable_graph_memory_update:
             if not graph_id:
                 raise ValueError("启用图谱记忆更新时必须提供 graph_id")
-            
-            try:
-                ZepGraphMemoryManager.create_updater(simulation_id, graph_id)
-                cls._graph_memory_enabled[simulation_id] = True
-                logger.info(f"已启用图谱记忆更新: simulation_id={simulation_id}, graph_id={graph_id}")
-            except Exception as e:
-                logger.error(f"创建图谱记忆更新器失败: {e}")
-                cls._graph_memory_enabled[simulation_id] = False
+            store = GraphStore()
+            cls._graph_memory[simulation_id] = {"store": store, "graph_id": graph_id}
+            logger.info(f"已启用图谱记忆更新: simulation_id={simulation_id}, graph_id={graph_id}")
         else:
-            cls._graph_memory_enabled[simulation_id] = False
+            cls._graph_memory.pop(simulation_id, None)
         
         # 确定运行哪个脚本（脚本位于 backend/scripts/ 目录）
         if platform == "twitter":
@@ -479,7 +474,7 @@ class SimulationRunner:
         return state
     
     @classmethod
-    def _monitor_simulation(cls, simulation_id: str, locale: str = 'zh'):
+    def _monitor_simulation(cls, simulation_id: str, locale: str = 'en'):
         """监控模拟进程，解析动作日志"""
         set_locale(locale)
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
@@ -553,14 +548,8 @@ class SimulationRunner:
             cls._save_run_state(state)
         
         finally:
-            # 停止图谱记忆更新器
-            if cls._graph_memory_enabled.get(simulation_id, False):
-                try:
-                    ZepGraphMemoryManager.stop_updater(simulation_id)
-                    logger.info(f"已停止图谱记忆更新: simulation_id={simulation_id}")
-                except Exception as e:
-                    logger.error(f"停止图谱记忆更新器失败: {e}")
-                cls._graph_memory_enabled.pop(simulation_id, None)
+            # 清理图谱记忆更新器
+            cls._graph_memory.pop(simulation_id, None)
             
             # 清理进程资源
             cls._processes.pop(simulation_id, None)
@@ -601,10 +590,9 @@ class SimulationRunner:
             新的读取位置
         """
         # 检查是否启用了图谱记忆更新
-        graph_memory_enabled = cls._graph_memory_enabled.get(state.simulation_id, False)
-        graph_updater = None
-        if graph_memory_enabled:
-            graph_updater = ZepGraphMemoryManager.get_updater(state.simulation_id)
+        graph_mem = cls._graph_memory.get(state.simulation_id) or {}
+        graph_store = graph_mem.get("store")
+        graph_id = graph_mem.get("graph_id")
         
         try:
             with open(log_path, 'r', encoding='utf-8') as f:
@@ -679,9 +667,18 @@ class SimulationRunner:
                             if action.round_num and action.round_num > state.current_round:
                                 state.current_round = action.round_num
                             
-                            # 如果启用了图谱记忆更新，将活动发送到Zep
-                            if graph_updater:
-                                graph_updater.add_activity_from_dict(action_data, platform)
+                            # 如果启用了图谱记忆更新，将活动写入GraphStore
+                            if graph_store and graph_id:
+                                try:
+                                    graph_store.add_batch(
+                                        graph_id=graph_id,
+                                        episodes=[type('EpisodeData', (), {
+                                            'data': json.dumps(action_data, ensure_ascii=False),
+                                            'type': 'simulation_action'
+                                        })()]
+                                    )
+                                except Exception as e:
+                                    logger.debug(f"写入模拟动作到GraphStore失败: {e}")
                             
                         except json.JSONDecodeError:
                             pass
@@ -809,14 +806,8 @@ class SimulationRunner:
         state.completed_at = datetime.now().isoformat()
         cls._save_run_state(state)
         
-        # 停止图谱记忆更新器
-        if cls._graph_memory_enabled.get(simulation_id, False):
-            try:
-                ZepGraphMemoryManager.stop_updater(simulation_id)
-                logger.info(f"已停止图谱记忆更新: simulation_id={simulation_id}")
-            except Exception as e:
-                logger.error(f"停止图谱记忆更新器失败: {e}")
-            cls._graph_memory_enabled.pop(simulation_id, None)
+        # 清理图谱记忆更新器
+        cls._graph_memory.pop(simulation_id, None)
         
         logger.info(f"模拟已停止: {simulation_id}")
         return state
@@ -1197,19 +1188,15 @@ class SimulationRunner:
         
         # 检查是否有内容需要清理（避免空进程的进程打印无用日志）
         has_processes = bool(cls._processes)
-        has_updaters = bool(cls._graph_memory_enabled)
+        has_updaters = bool(cls._graph_memory)
         
         if not has_processes and not has_updaters:
             return  # 没有需要清理的内容，静默返回
         
         logger.info("正在清理所有模拟进程...")
         
-        # 首先停止所有图谱记忆更新器（stop_all 内部会打印日志）
-        try:
-            ZepGraphMemoryManager.stop_all()
-        except Exception as e:
-            logger.error(f"停止图谱记忆更新器失败: {e}")
-        cls._graph_memory_enabled.clear()
+        # 清理所有图谱记忆更新器
+        cls._graph_memory.clear()
         
         # 复制字典以避免在迭代时修改
         processes = list(cls._processes.items())
@@ -1319,7 +1306,7 @@ class SimulationRunner:
         def cleanup_handler(signum=None, frame=None):
             """信号处理器：先清理模拟进程，再调用原处理器"""
             # 只有在有进程需要清理时才打印日志
-            if cls._processes or cls._graph_memory_enabled:
+            if cls._processes or cls._graph_memory:
                 logger.info(f"收到信号 {signum}，开始清理...")
             cls.cleanup_all_simulations()
             

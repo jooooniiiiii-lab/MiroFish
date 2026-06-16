@@ -17,7 +17,6 @@ __pycache__
 .mypy_cache
 .ruff_cache
 
-frontend/dist
 frontend/.vite
 
 backend/uploads

@@ -5,7 +5,7 @@
 from .ontology_generator import OntologyGenerator
 from .graph_builder import GraphBuilderService
 from .text_processor import TextProcessor
-from .zep_entity_reader import ZepEntityReader, EntityNode, FilteredEntities
+from .entity_reader import EntityReader, EntityNode, FilteredEntities
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_manager import SimulationManager, SimulationState, SimulationStatus
 from .simulation_config_generator import (
@@ -23,10 +23,12 @@ from .simulation_runner import (
     AgentAction,
     RoundSummary
 )
-from .zep_graph_memory_updater import (
-    ZepGraphMemoryUpdater,
-    ZepGraphMemoryManager,
-    AgentActivity
+from .graph_tools import (
+    GraphToolsService,
+    SearchResult,
+    InsightForgeResult,
+    PanoramaResult,
+    InterviewResult
 )
 from .simulation_ipc import (
     SimulationIPCClient,
@@ -41,7 +43,7 @@ __all__ = [
     'OntologyGenerator', 
     'GraphBuilderService', 
     'TextProcessor',
-    'ZepEntityReader',
+    'EntityReader',
     'EntityNode',
     'FilteredEntities',
     'OasisProfileGenerator',
@@ -60,9 +62,11 @@ __all__ = [
     'RunnerStatus',
     'AgentAction',
     'RoundSummary',
-    'ZepGraphMemoryUpdater',
-    'ZepGraphMemoryManager',
-    'AgentActivity',
+    'GraphToolsService',
+    'SearchResult',
+    'InsightForgeResult',
+    'PanoramaResult',
+    'InterviewResult',
     'SimulationIPCClient',
     'SimulationIPCServer',
     'IPCCommand',
